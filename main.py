@@ -211,9 +211,9 @@ def main(page: ft.Page):
         selected_index=0,
         on_change=nav_change,
         destinations=[
-            ft.NavigationDestination(icon=Icons.DASHBOARD_ROUNDED, label="الرئيسية"),
-            ft.NavigationDestination(icon=Icons.LOCAL_SHIPPING_ROUNDED, label="نقلة"),
-            ft.NavigationDestination(icon=Icons.PERSON_ADD_ROUNDED, label="إضافة طرف"),
+            ft.NavigationBarDestination(icon=Icons.DASHBOARD_ROUNDED, label="الرئيسية"),
+            ft.NavigationBarDestination(icon=Icons.LOCAL_SHIPPING_ROUNDED, label="نقلة"),
+            ft.NavigationBarDestination(icon=Icons.PERSON_ADD_ROUNDED, label="إضافة طرف"),
         ]
     )
 
@@ -221,4 +221,3 @@ def main(page: ft.Page):
 
 
 ft.app(target=main)
-
