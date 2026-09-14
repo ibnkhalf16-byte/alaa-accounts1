@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
+import os
+import hashlib
+import hmac
 from datetime import datetime
 import flet as ft
 from flet import Colors, Icons
 from supabase import create_client, Client
-import hashlib
-import hmac
-import os
 
 # =========================================================
 # بيانات الاتصال بقاعدة البيانات السحابية (Supabase)
@@ -22,7 +22,7 @@ except Exception:
     db = None
 
 # =========================================================
-# أدوات الحساب والتنسيق وكلمة المرور
+# أدوات مساعدة ومنطق الحسابات والترميز
 # =========================================================
 def today():
     return datetime.now().strftime("%Y-%m-%d")
@@ -77,26 +77,50 @@ def verify_password(password, stored):
         return False
 
 # =========================================================
-# واجهة التطبيق
+# تطبيق الموبايل (Flet)
 # =========================================================
 def main(page: ft.Page):
     page.title = APP_NAME
     page.theme_mode = ft.ThemeMode.LIGHT
     page.rtl = True
     page.padding = 0
-    page.bgcolor = "#F8FAFC"
+    page.bgcolor = "#F1F5F9"
 
+    # دوال متوافقة لعرض النوافذ المنبثقة ورسائل التنبيه
     def notify(msg, is_error=False):
         page.snack_bar = ft.SnackBar(
-            content=ft.Text(msg, color=Colors.WHITE, size=13, weight=ft.FontWeight.BOLD),
+            content=ft.Text(str(msg), color=Colors.WHITE, size=13, weight=ft.FontWeight.BOLD),
             bgcolor=Colors.RED_700 if is_error else Colors.GREEN_700,
             duration=3500
         )
         page.snack_bar.open = True
         page.update()
 
-    # --- استعلامات قاعدة البيانات السحابية ---
+    def show_dlg(dlg):
+        if hasattr(page, "open"):
+            try:
+                page.open(dlg)
+                return
+            except Exception:
+                pass
+        page.dialog = dlg
+        dlg.open = True
+        page.update()
+
+    def close_dlg(dlg):
+        if hasattr(page, "close"):
+            try:
+                page.close(dlg)
+                return
+            except Exception:
+                pass
+        dlg.open = False
+        page.update()
+
+    # --- استعلامات السحابة المباشرة ---
     def get_setting(key):
+        if not db:
+            return hash_password(DEFAULT_PASSWORD)
         try:
             res = db.table("settings").select("value").eq("key", key).execute().data
             if res:
@@ -110,12 +134,16 @@ def main(page: ft.Page):
         return None
 
     def set_setting(key, value):
+        if not db:
+            return
         try:
             db.table("settings").upsert({"key": key, "value": value}).execute()
         except Exception as err:
             notify(f"خطأ حفظ الإعدادات: {err}", is_error=True)
 
     def fetch_persons():
+        if not db:
+            return []
         try:
             return db.table("persons").select("*").order("name").execute().data or []
         except Exception as err:
@@ -123,6 +151,8 @@ def main(page: ft.Page):
             return []
 
     def fetch_trips():
+        if not db:
+            return []
         try:
             return db.table("trips").select("*, persons(name)").order("date").order("id").execute().data or []
         except Exception as err:
@@ -130,6 +160,8 @@ def main(page: ft.Page):
             return []
 
     def fetch_payments():
+        if not db:
+            return []
         try:
             return db.table("payments").select("*, persons(name)").order("date").order("id").execute().data or []
         except Exception as err:
@@ -137,32 +169,33 @@ def main(page: ft.Page):
             return []
 
     # =====================================================
-    # نافذة التحقق بكلمة المرور
+    # حماية العمليات بكلمة مرور
     # =====================================================
     def ask_auth(action_name, callback):
         pwd_box = ft.TextField(label="كلمة المرور", password=True, can_reveal_password=True, autofocus=True)
         dlg = ft.AlertDialog(
+            modal=True,
             title=ft.Text("حماية العمليات", weight=ft.FontWeight.BOLD),
             content=ft.Column([
                 ft.Text(f"أدخل كلمة المرور للسماح بـ {action_name}:", size=13),
                 pwd_box
             ], tight=True, spacing=10),
             actions=[
-                ft.TextButton("إلغاء", on_click=lambda e: page.close(dlg)),
-                ft.ElevatedButton("تأكيد", on_click=lambda e: confirm_auth(pwd_box.value, dlg, callback), bgcolor=Colors.BLUE_700, color=Colors.WHITE)
+                ft.TextButton("إلغاء", on_click=lambda e: close_dlg(dlg)),
+                ft.ElevatedButton("تأكيد", on_click=lambda e: verify_action(pwd_box.value, dlg, callback), bgcolor=Colors.BLUE_700, color=Colors.WHITE)
             ]
         )
-        def confirm_auth(entered, dialog, cb):
+        def verify_action(entered, dialog, cb):
             stored = get_setting("password_hash")
             if verify_password(entered or "", stored):
-                page.close(dialog)
+                close_dlg(dialog)
                 cb()
             else:
                 notify("كلمة المرور غير صحيحة!", is_error=True)
-        page.open(dlg)
+        show_dlg(dlg)
 
     # =====================================================
-    # خوارزمية متابعة شراء وبيع الأوزان (FIFO)
+    # خوارزمية متابعة شراء وبيع الأوزان (FIFO الدقيقة)
     # =====================================================
     def trip_statuses():
         rows = fetch_trips()
@@ -180,7 +213,7 @@ def main(page: ft.Page):
         matched = {row["id"]: 0.0 for row in rows}
         statuses = {}
 
-        # 1. النقلات المرتبطة مباشرة
+        # 1. النقلات المباعة والمرتبطة مباشرة بمصدر
         linked_sales = [
             row for row in rows
             if row["operation"] == "sale"
@@ -211,7 +244,7 @@ def main(page: ft.Page):
             else:
                 statuses[sale["id"]] = f"مباع بدون شراء: {num_text(remaining_sale)} طن"
 
-        # 2. النقلات المباعة بدون ربط مباشر (FIFO)
+        # 2. النقلات المباعة بدون ربط مباشر (نظام الأسبقية FIFO)
         queues = {}
         for row in rows:
             if row["operation"] != "purchase":
@@ -251,7 +284,7 @@ def main(page: ft.Page):
             else:
                 statuses[sale["id"]] = "لم يتم شراء هذه الوزنة"
 
-        # 3. حالة كل نقلة شراء
+        # 3. تحديد حالة كل نقلة شراء
         for row in rows:
             if row["operation"] != "purchase":
                 continue
@@ -268,7 +301,7 @@ def main(page: ft.Page):
         return statuses
 
     # =====================================================
-    # رصيد كل شخص
+    # رصيد كل شخص المالي
     # =====================================================
     def get_person_balance(person_id, person_data, trips_data, payments_data):
         sales = sum(float(t["total"]) for t in trips_data if t["person_id"] == person_id and t["operation"] == "sale")
@@ -296,7 +329,7 @@ def main(page: ft.Page):
         }
 
     # =====================================================
-    # أحداث كشف الحساب والترتيب الدقيق
+    # أحداث كشف الحساب والترتيب الزمني
     # =====================================================
     def statement_events(person_id, person, trips, payments):
         events = []
@@ -362,7 +395,7 @@ def main(page: ft.Page):
         events.sort(key=statement_sort_key)
         return events
 
-    # الترويسة الموحدة (بدون استدعاء ft.padding)
+    # ترويسة الصفحات المحمية من تداخل الشاشة
     def header_bar(title, subtitle):
         return ft.Container(
             content=ft.Column([
@@ -372,7 +405,7 @@ def main(page: ft.Page):
             bgcolor="#1E293B",
             padding=16,
             border_radius=ft.border_radius.only(bottom_left=14, bottom_right=14),
-            shadow=ft.BoxShadow(blur_radius=5, color=Colors.BLACK12)
+            shadow=ft.BoxShadow(blur_radius=4, color=Colors.BLACK12)
         )
 
     # =====================================================
@@ -415,7 +448,7 @@ def main(page: ft.Page):
             )
 
         return ft.Column([
-            header_bar(f"📊 {APP_NAME}", "ملخص فوري للمبيعات والمشتريات والمبالغ المستحقة"),
+            header_bar(f"📊 {APP_NAME}", "ملخص سريع للمبيعات والمشتريات والمبالغ المستحقة"),
             ft.Container(
                 content=ft.Column([
                     stat_box("إجمالي المبيعات", f"{money(sales)} ج.م", Icons.ARROW_UPWARD_ROUNDED, Colors.GREEN_700),
@@ -453,25 +486,20 @@ def main(page: ft.Page):
                 rec_val = get_number(rec_in.value, "رصيد أول المدة للعميل", True)
                 pay_val = get_number(pay_in.value, "رصيد أول المدة للمورد", True)
 
+                payload = {
+                    "name": name_in.value.strip(),
+                    "phone": phone_in.value.strip() if phone_in.value else "",
+                    "address": address_in.value.strip() if address_in.value else "",
+                    "notes": notes_in.value.strip() if notes_in.value else "",
+                    "opening_receivable": rec_val,
+                    "opening_payable": pay_val
+                }
+
                 if edit_id[0]:
-                    db.table("persons").update({
-                        "name": name_in.value.strip(),
-                        "phone": phone_in.value.strip() if phone_in.value else "",
-                        "address": address_in.value.strip() if address_in.value else "",
-                        "notes": notes_in.value.strip() if notes_in.value else "",
-                        "opening_receivable": rec_val,
-                        "opening_payable": pay_val
-                    }).eq("id", edit_id[0]).execute()
+                    db.table("persons").update(payload).eq("id", edit_id[0]).execute()
                     notify("تم تعديل بيانات الشخص بنجاح.")
                 else:
-                    db.table("persons").insert({
-                        "name": name_in.value.strip(),
-                        "phone": phone_in.value.strip() if phone_in.value else "",
-                        "address": address_in.value.strip() if address_in.value else "",
-                        "notes": notes_in.value.strip() if notes_in.value else "",
-                        "opening_receivable": rec_val,
-                        "opening_payable": pay_val
-                    }).execute()
+                    db.table("persons").insert(payload).execute()
                     notify("تم حفظ الشخص بنجاح.")
 
                 refresh_content()
@@ -504,7 +532,7 @@ def main(page: ft.Page):
                 notify("لا يمكن الحذف: هذا الشخص لديه بيانات مالية مسجلة.", is_error=True); return
             try:
                 db.table("persons").delete().eq("id", p_id).execute()
-                notify("تم حذف الشخص.")
+                notify("تم حذف الشخص بنجاح.")
                 refresh_content()
             except Exception as err:
                 notify(f"خطأ في الحذف: {err}", is_error=True)
@@ -558,7 +586,7 @@ def main(page: ft.Page):
         ], scroll=ft.ScrollMode.AUTO, expand=True)
 
     # =====================================================
-    # 3. شاشة النقلات (شراء / بيع / بيع النقلة المشتراة)
+    # 3. شاشة النقلات (شراء / بيع / تحويل النقلة المشتراة)
     # =====================================================
     def view_trips():
         persons = fetch_persons()
@@ -670,7 +698,7 @@ def main(page: ft.Page):
             except Exception as err:
                 notify(f"خطأ في الحذف: {err}", is_error=True)
 
-        # نافذة بيع النقلة المشتراة لعميل
+        # بيع النقلة المشتراة لعميل بدون إعادة إدخال بياناتها
         def sell_selected_purchase(trip):
             if trip["operation"] != "purchase":
                 notify("يجب اختيار نقلة من نوع شراء من مورد.", is_error=True); return
@@ -693,16 +721,17 @@ def main(page: ft.Page):
             sp_box = ft.TextField(label="سعر بيع الطن", keyboard_type=ft.KeyboardType.NUMBER)
 
             dlg = ft.AlertDialog(
+                modal=True,
                 title=ft.Text("بيع النقلة المشتراة لعميل", weight=ft.FontWeight.BOLD),
                 content=ft.Column([
                     cust_dd, w_box, sp_box
                 ], tight=True, spacing=8),
                 actions=[
-                    ft.TextButton("إلغاء", on_click=lambda e: page.close(dlg)),
+                    ft.TextButton("إلغاء", on_click=lambda e: close_dlg(dlg)),
                     ft.ElevatedButton("تأكيد البيع", on_click=lambda e: confirm_sell(dlg, trip, cust_dd.value, w_box.value, sp_box.value, remaining), bgcolor=Colors.GREEN_700, color=Colors.WHITE)
                 ]
             )
-            page.open(dlg)
+            show_dlg(dlg)
 
         def confirm_sell(dialog, purchase_trip, cust_id, w_val, sp_val, rem_avail):
             if not cust_id:
@@ -717,7 +746,7 @@ def main(page: ft.Page):
                 notify("الوزن المباع يجب أن يكون أكبر من صفر ولا يتجاوز الوزن المتاح.", is_error=True); return
 
             def do_sell():
-                page.close(dialog)
+                close_dlg(dialog)
                 tot = round(weight * sale_price, 2)
                 try:
                     db.table("trips").insert({
@@ -752,7 +781,7 @@ def main(page: ft.Page):
                         ft.Row([
                             ft.Text(f"#{t['id']} | {p_name} ({'بيع لعميل' if is_sale else 'شراء من مورد'})", weight=ft.FontWeight.BOLD, size=13),
                             ft.Row([
-                                ft.IconButton(Icons.FORWARD_ROUNDED, icon_size=18, icon_color=Colors.GREEN_700, tooltip="بيع النقلة", on_click=lambda e, tr=t: sell_selected_purchase(tr)) if not is_sale else ft.Container(),
+                                ft.IconButton(Icons.FORWARD_ROUNDED, icon_size=18, icon_color=Colors.GREEN_700, tooltip="بيع النقلة لعميل", on_click=lambda e, tr=t: sell_selected_purchase(tr)) if not is_sale else ft.Container(),
                                 ft.IconButton(Icons.EDIT_ROUNDED, icon_size=18, icon_color=Colors.BLUE_700, on_click=lambda e, tr=t: start_edit_trip(tr)),
                                 ft.IconButton(Icons.DELETE_ROUNDED, icon_size=18, icon_color=Colors.RED_700, on_click=lambda e, tid=t["id"]: start_delete_trip(tid)),
                             ], spacing=0)
@@ -1063,7 +1092,7 @@ def main(page: ft.Page):
     def view_weights_and_profits():
         trips = fetch_trips()
 
-        # حساب الأوزان
+        # متابعة الأوزان
         grouped_weights = {}
         for row in trips:
             item_key = normalize_item(row["item"])
@@ -1204,7 +1233,7 @@ def main(page: ft.Page):
         ], scroll=ft.ScrollMode.AUTO, expand=True)
 
     # =====================================================
-    # إدارة التنقل وتسجيل الدخول عند بدء التشغيل
+    # إدارة التنقل وتسجيل الدخول الأولي
     # =====================================================
     content_area = ft.Container(expand=True)
 
@@ -1244,12 +1273,12 @@ def main(page: ft.Page):
         ]
     )
 
-    # نافذة تسجيل الدخول الأولية
+    # نافذة تسجيل الدخول عند بدء التشغيل
     login_pwd = ft.TextField(label="كلمة المرور", password=True, can_reveal_password=True, autofocus=True)
     def do_login(e):
         stored = get_setting("password_hash")
         if verify_password(login_pwd.value or "", stored):
-            page.close(login_dlg)
+            close_dlg(login_dlg)
             refresh_content()
         else:
             notify("كلمة المرور غير صحيحة!", is_error=True)
@@ -1267,6 +1296,6 @@ def main(page: ft.Page):
     )
 
     page.add(ft.SafeArea(content_area, expand=True))
-    page.open(login_dlg)
+    show_dlg(login_dlg)
 
 ft.app(target=main)
