@@ -8,20 +8,21 @@ import hmac
 import os
 
 # =========================================================
-# الربط السحابي (Supabase)
+# بيانات الاتصال بقاعدة البيانات السحابية (Supabase)
 # =========================================================
 SUPABASE_URL = "https://moccsagndofjwtjmqtdd.supabase.co"
 SUPABASE_KEY = "sb_publishable_L-mFR01JF4qMRQXm16Mr2A_CqDxCZo0"
+
+APP_NAME = "حسابات علاء أبو شادي"
+DEFAULT_PASSWORD = "1234"
 
 try:
     db: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception:
     db = None
 
-DEFAULT_PASSWORD = "1234"
-
 # =========================================================
-# أدوات الحساب والتنسيق وكلمة المرور من الكود الأصلي
+# أدوات الحساب والتنسيق وكلمة المرور
 # =========================================================
 def today():
     return datetime.now().strftime("%Y-%m-%d")
@@ -79,7 +80,7 @@ def verify_password(password, stored):
 # واجهة التطبيق
 # =========================================================
 def main(page: ft.Page):
-    page.title = "حسابات علاء أبو شادي"
+    page.title = APP_NAME
     page.theme_mode = ft.ThemeMode.LIGHT
     page.rtl = True
     page.padding = 0
@@ -136,7 +137,7 @@ def main(page: ft.Page):
             return []
 
     # =====================================================
-    # التحقق وكلمة المرور
+    # نافذة التحقق بكلمة المرور
     # =====================================================
     def ask_auth(action_name, callback):
         pwd_box = ft.TextField(label="كلمة المرور", password=True, can_reveal_password=True, autofocus=True)
@@ -161,7 +162,7 @@ def main(page: ft.Page):
         page.open(dlg)
 
     # =====================================================
-    # خوارزمية متابعة شراء وبيع الأوزان (من ملف نهائي تماماً)
+    # خوارزمية متابعة شراء وبيع الأوزان (FIFO)
     # =====================================================
     def trip_statuses():
         rows = fetch_trips()
@@ -267,7 +268,7 @@ def main(page: ft.Page):
         return statuses
 
     # =====================================================
-    # رصيد كل شخص (حسابات نهائي بدقة)
+    # رصيد كل شخص
     # =====================================================
     def get_person_balance(person_id, person_data, trips_data, payments_data):
         sales = sum(float(t["total"]) for t in trips_data if t["person_id"] == person_id and t["operation"] == "sale")
@@ -361,7 +362,7 @@ def main(page: ft.Page):
         events.sort(key=statement_sort_key)
         return events
 
-    # الترويسة الموحدة
+    # الترويسة الموحدة (بدون استدعاء ft.padding)
     def header_bar(title, subtitle):
         return ft.Container(
             content=ft.Column([
@@ -369,7 +370,7 @@ def main(page: ft.Page):
                 ft.Text(subtitle, size=11, color=Colors.BLUE_GREY_100),
             ], spacing=1),
             bgcolor="#1E293B",
-            padding=ft.padding.only(left=18, right=18, top=12, bottom=12),
+            padding=16,
             border_radius=ft.border_radius.only(bottom_left=14, bottom_right=14),
             shadow=ft.BoxShadow(blur_radius=5, color=Colors.BLACK12)
         )
@@ -414,7 +415,7 @@ def main(page: ft.Page):
             )
 
         return ft.Column([
-            header_bar("📊 لوحة الحسابات العامة", "ملخص سريع للمبيعات والمشتريات والمبالغ المستحقة"),
+            header_bar(f"📊 {APP_NAME}", "ملخص فوري للمبيعات والمشتريات والمبالغ المستحقة"),
             ft.Container(
                 content=ft.Column([
                     stat_box("إجمالي المبيعات", f"{money(sales)} ج.م", Icons.ARROW_UPWARD_ROUNDED, Colors.GREEN_700),
@@ -461,7 +462,7 @@ def main(page: ft.Page):
                         "opening_receivable": rec_val,
                         "opening_payable": pay_val
                     }).eq("id", edit_id[0]).execute()
-                    notify("تم تعديل الشخص.")
+                    notify("تم تعديل بيانات الشخص بنجاح.")
                 else:
                     db.table("persons").insert({
                         "name": name_in.value.strip(),
@@ -882,7 +883,7 @@ def main(page: ft.Page):
 
                 if edit_pay_id[0]:
                     db.table("payments").update(payload).eq("id", edit_pay_id[0]).execute()
-                    notify("تم تعديل السداد.")
+                    notify("تم تعديل السداد بنجاح.")
                 else:
                     db.table("payments").insert(payload).execute()
                     notify("تم حفظ السداد بنجاح.")
@@ -991,7 +992,7 @@ def main(page: ft.Page):
             border_color="#CBD5E1"
         )
         statement_view = ft.Column(spacing=6)
-        summary_txt = ft.Text("اختر شخصًا ثم اضغط عرض كشف الحساب", size=12, weight=ft.FontWeight.BOLD)
+        summary_txt = ft.Text("اختر شخصاً ثم اضغط عرض كشف الحساب", size=12, weight=ft.FontWeight.BOLD)
 
         def show_stmt(e):
             if not person_dd.value:
@@ -1203,7 +1204,7 @@ def main(page: ft.Page):
         ], scroll=ft.ScrollMode.AUTO, expand=True)
 
     # =====================================================
-    # نافذة تسجيل الدخول عند بدء التشغيل
+    # إدارة التنقل وتسجيل الدخول عند بدء التشغيل
     # =====================================================
     content_area = ft.Container(expand=True)
 
@@ -1243,12 +1244,12 @@ def main(page: ft.Page):
         ]
     )
 
-    # شاشة تسجيل الدخول الأولية
-    login_pwd = ft.TextField(label="كلمة المرور", password=True, can_reveal_password=True)
+    # نافذة تسجيل الدخول الأولية
+    login_pwd = ft.TextField(label="كلمة المرور", password=True, can_reveal_password=True, autofocus=True)
     def do_login(e):
         stored = get_setting("password_hash")
         if verify_password(login_pwd.value or "", stored):
-            page.dialog.open = False
+            page.close(login_dlg)
             refresh_content()
         else:
             notify("كلمة المرور غير صحيحة!", is_error=True)
@@ -1257,7 +1258,7 @@ def main(page: ft.Page):
         modal=True,
         title=ft.Text("تسجيل الدخول", weight=ft.FontWeight.BOLD),
         content=ft.Column([
-            ft.Text("أدخل كلمة المرور لفتح التطبيق:"),
+            ft.Text(f"أدخل كلمة المرور لفتح {APP_NAME}:"),
             login_pwd
         ], tight=True, spacing=10),
         actions=[
@@ -1266,9 +1267,6 @@ def main(page: ft.Page):
     )
 
     page.add(ft.SafeArea(content_area, expand=True))
-    page.dialog = login_dlg
-    login_dlg.open = True
-    page.update()
+    page.open(login_dlg)
 
 ft.app(target=main)
-
